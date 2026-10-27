@@ -7,7 +7,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.OptionalInt;
 
-public class LruReplacer {
+public class LruReplacer implements Replacer {
 
     private final int capacity;
     private final DoublyLinkedList<Integer> list;
@@ -22,7 +22,8 @@ public class LruReplacer {
         nodes = new HashMap<>();
     }
 
-    void pin(int frameId) {
+    @Override
+    public void markNonEvictable(int frameId) {
         checkFrameId(frameId);
         Node<Integer> node = nodes.remove(frameId);
         if (node != null) {
@@ -31,14 +32,16 @@ public class LruReplacer {
 
     }
 
-    void unpin(int frameId) {
+    @Override
+    public void markEvictable(int frameId) {
         checkFrameId(frameId);
         if (!nodes.containsKey(frameId)) {
             nodes.put(frameId, list.addLast(frameId));
         }
     }
 
-    OptionalInt victim() {
+    @Override
+    public OptionalInt victim() {
         if (list.isEmpty()) {
             return OptionalInt.empty();
         }
@@ -47,7 +50,8 @@ public class LruReplacer {
         return OptionalInt.of(frameId);
     }
 
-    int size() {
+    @Override
+    public int size() {
         return list.size();
     }
 

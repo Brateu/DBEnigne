@@ -44,9 +44,9 @@ class LruReplacerTest {
     @Test
     void victimsComeOutOldestFirst() {
         LruReplacer replacer = new LruReplacer(4);
-        replacer.unpin(2);
-        replacer.unpin(0);
-        replacer.unpin(3);
+        replacer.markEvictable(2);
+        replacer.markEvictable(0);
+        replacer.markEvictable(3);
 
         assertEquals(3, replacer.size());
         assertEquals(List.of(2, 0, 3), drainVictims(replacer));
@@ -54,56 +54,56 @@ class LruReplacerTest {
     }
 
     @Test
-    void pinThenUnpinMovesFrameToNewest() {
+    void nonEvictableThenEvictableMovesFrameToNewest() {
         // The walkthrough from our discussion: 0 is used again, so 1 becomes the oldest.
         LruReplacer replacer = new LruReplacer(3);
-        replacer.unpin(0);
-        replacer.unpin(1);
-        replacer.unpin(2);
+        replacer.markEvictable(0);
+        replacer.markEvictable(1);
+        replacer.markEvictable(2);
 
-        replacer.pin(0);
-        replacer.unpin(0);
+        replacer.markNonEvictable(0);
+        replacer.markEvictable(0);
 
         assertEquals(List.of(1, 2, 0), drainVictims(replacer));
     }
 
-    // ---- pin ----
+    // ---- markNonEvictable ----
 
     @Test
-    void pinnedFrameIsNeverAVictim() {
+    void nonEvictableFrameIsNeverAVictim() {
         LruReplacer replacer = new LruReplacer(3);
-        replacer.unpin(0);
-        replacer.unpin(1);
-        replacer.unpin(2);
+        replacer.markEvictable(0);
+        replacer.markEvictable(1);
+        replacer.markEvictable(2);
 
-        replacer.pin(1);
+        replacer.markNonEvictable(1);
 
         assertEquals(2, replacer.size());
         assertEquals(List.of(0, 2), drainVictims(replacer));
     }
 
     @Test
-    void pinOfNonCandidateDoesNothing() {
+    void markNonEvictableOfNonCandidateDoesNothing() {
         LruReplacer replacer = new LruReplacer(3);
-        replacer.unpin(0);
+        replacer.markEvictable(0);
 
-        replacer.pin(2);   // never unpinned
-        replacer.pin(0);
-        replacer.pin(0);   // second pin: already not a candidate
+        replacer.markNonEvictable(2);   // never unpinned
+        replacer.markNonEvictable(0);
+        replacer.markNonEvictable(0);   // second pin: already not a candidate
 
         assertEquals(0, replacer.size());
         assertTrue(replacer.victim().isEmpty());
     }
 
-    // ---- unpin ----
+    // ---- markEvictable ----
 
     @Test
-    void unpinTwiceDoesNotDuplicateOrReorder() {
+    void markEvictableTwiceDoesNotDuplicateOrReorder() {
         LruReplacer replacer = new LruReplacer(3);
-        replacer.unpin(0);
-        replacer.unpin(1);
+        replacer.markEvictable(0);
+        replacer.markEvictable(1);
 
-        replacer.unpin(0);   // already a candidate: must not move to newest or be added twice
+        replacer.markEvictable(0);   // already a candidate: must not move to newest or be added twice
 
         assertEquals(2, replacer.size());
         assertEquals(List.of(0, 1), drainVictims(replacer));
@@ -114,25 +114,25 @@ class LruReplacerTest {
     @Test
     void victimRemovesFrameFromCandidates() {
         LruReplacer replacer = new LruReplacer(3);
-        replacer.unpin(0);
-        replacer.unpin(1);
+        replacer.markEvictable(0);
+        replacer.markEvictable(1);
 
         assertEquals(0, replacer.victim().getAsInt());
 
         assertEquals(1, replacer.size());
-        replacer.pin(0);   // 0 is gone already; must not throw or touch frame 1
+        replacer.markNonEvictable(0);   // 0 is gone already; must not throw or touch frame 1
         assertEquals(List.of(1), drainVictims(replacer));
     }
 
     @Test
     void replacerIsReusableAfterBeingEmptied() {
         LruReplacer replacer = new LruReplacer(2);
-        replacer.unpin(0);
+        replacer.markEvictable(0);
         replacer.victim();
         assertTrue(replacer.victim().isEmpty());
 
-        replacer.unpin(1);
-        replacer.unpin(0);
+        replacer.markEvictable(1);
+        replacer.markEvictable(0);
 
         assertEquals(List.of(1, 0), drainVictims(replacer));
     }
@@ -141,11 +141,11 @@ class LruReplacerTest {
     void victimFrameCanBecomeCandidateAgain() {
         // After eviction the pool reuses the frame for a new page; when that is unpinned it comes back.
         LruReplacer replacer = new LruReplacer(2);
-        replacer.unpin(0);
-        replacer.unpin(1);
+        replacer.markEvictable(0);
+        replacer.markEvictable(1);
         assertEquals(0, replacer.victim().getAsInt());
 
-        replacer.unpin(0);
+        replacer.markEvictable(0);
 
         assertEquals(List.of(1, 0), drainVictims(replacer));
     }
@@ -156,10 +156,10 @@ class LruReplacerTest {
     void outOfRangeFrameIdsThrow() {
         LruReplacer replacer = new LruReplacer(4);
 
-        assertThrows(IllegalArgumentException.class, () -> replacer.unpin(-1));
-        assertThrows(IllegalArgumentException.class, () -> replacer.unpin(4));
-        assertThrows(IllegalArgumentException.class, () -> replacer.pin(-1));
-        assertThrows(IllegalArgumentException.class, () -> replacer.pin(4));
+        assertThrows(IllegalArgumentException.class, () -> replacer.markEvictable(-1));
+        assertThrows(IllegalArgumentException.class, () -> replacer.markEvictable(4));
+        assertThrows(IllegalArgumentException.class, () -> replacer.markNonEvictable(-1));
+        assertThrows(IllegalArgumentException.class, () -> replacer.markNonEvictable(4));
         assertEquals(0, replacer.size());
     }
 
@@ -167,8 +167,8 @@ class LruReplacerTest {
     void boundaryFrameIdsAreAccepted() {
         LruReplacer replacer = new LruReplacer(4);
 
-        replacer.unpin(0);
-        replacer.unpin(3);
+        replacer.markEvictable(0);
+        replacer.markEvictable(3);
 
         assertEquals(List.of(0, 3), drainVictims(replacer));
     }
@@ -188,12 +188,12 @@ class LruReplacerTest {
             int op = random.nextInt(3);
 
             if (op == 0) {
-                replacer.unpin(frameId);
+                replacer.markEvictable(frameId);
                 if (!model.contains(frameId)) {
                     model.addLast(frameId);
                 }
             } else if (op == 1) {
-                replacer.pin(frameId);
+                replacer.markNonEvictable(frameId);
                 model.remove(frameId);   // Deque.remove(Object): removes the value, not an index
             } else {
                 OptionalInt victim = replacer.victim();

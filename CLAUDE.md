@@ -58,20 +58,16 @@ A custom database engine built from scratch in Java as a long-term learning and 
 ## Current phase
 **Phase 1 — Storage Engine (page-based).** Resume point as of 2026-10-27.
 
-Done and tested (50 tests pass):
+Done and tested (74 tests pass):
 - `db/storage/DiskManager` — FileChannel positional I/O, `checkPageId` helper (DiskManagerTest, 13)
 - `db/storage/Frame` — private fields; package-private pin/unpin/markDirty/clearDirty/reset; reset throws if pinned or dirty (FrameTest, 10)
 - `db/util/DoublyLinkedList` — my own, null-based, guard in remove, `addLast` returns Node (DoublyLinkedListTest, 14)
-- `db/storage/LruReplacer` — list + HashMap; unpin = add candidate, pin = remove candidate, `victim()` → OptionalInt (LruReplacerTest, 13, incl. randomized model test)
+- `db/storage/LruReplacer` — implements `Replacer` interface; list + HashMap; `markEvictable` = add candidate, `markNonEvictable` = remove candidate, `victim()` → OptionalInt (LruReplacerTest, 13, incl. randomized model test)
 
-**In progress: `db/storage/BufferPool`** (I write it; WIP, doesn't compile yet).
-- Fields: DiskManager, `Frame[] frames`, `Map pageTable` (pageId → frameId), `Deque freeList`, LruReplacer.
-- Methods: `fetchPage`, `newPage`, `unpinPage(pageId, dirty)`, `flushPage`, `flushAll`, private `findFreeFrame` (free list → victim → write back if dirty → remove old pageId from pageTable), private `frameIdOf`.
-- Pitfalls to watch: dirty flag is OR'd (never cleared on unpin); remove the *old pageId* from pageTable on evict; copy into the frame's array; read from disk BEFORE taking a frame (avoid frame leak on IOException); `newPage` gets a frame before `allocatePage`; zero the data in `newPage`.
-- Suggested build order: ctor + `frameIdOf` → fetch without eviction → unpin → eviction → newPage → flush.
-- Then Claude writes BufferPoolTest (tiny pool, 2–3 frames).
+- `db/storage/BufferPool` — fields `pageIdToFrameId`, `freeList`, `Replacer replacer`; private `acquireFrame` (free list → victim → write back if dirty + clearDirty → remove old pageId) and `frameIdOf`; `fetchPage` reads disk before acquiring a frame; `newPage` acquires frame before `allocatePage` and pushes the frame back on failure; `unpinPage` ORs dirty, marks evictable at pin count 0; `flushPage`/`flushAll` (iterates map keys) (BufferPoolTest, 24)
+- `Frame.zeroData()` added (no dedicated FrameTest yet; covered via BufferPoolTest)
 
-**Next after BufferPool:** slotted heap page.
+**Next:** slotted heap page. Open idea: dedicated unchecked `StorageException` instead of wrapping `IOException` in plain `RuntimeException`.
 
 Already explained (don't re-explain unless asked): pages vs files, slotted pages/fragmentation, whole-page writes, read/write loop, FileChannel.read return values, sync, JUnit basics, model-based testing, LRU in depth, pin count vs replacer pin/unpin, lazy eviction.
 
