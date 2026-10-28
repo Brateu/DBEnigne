@@ -1,7 +1,6 @@
 package db.storage;
 
 import java.io.IOException;
-import java.nio.Buffer;
 import java.util.*;
 
 import static java.util.Objects.requireNonNull;
@@ -30,10 +29,21 @@ public class BufferPool {
         this.replacer = new LruReplacer(poolSize);
     }
 
+    private void writeBack(Frame frame) {
+        if (frame.isDirty()) {
+            try {
+                diskManager.write(frame.getPageId(), frame.getData());
+            } catch (IOException e) {
+                throw new StorageException("error while writing page " + frame.getPageId() + " to disk", e);
+            }
+            frame.clearDirty();
+        }
+    }
+
     private int frameIdOf(int pageId) {
         int frameId = pageIdToFrameId.getOrDefault(pageId, -1);
         if (frameId == -1) {
-            throw new IllegalArgumentException("page with id " + pageId + " is not in the cache");
+            throw new IllegalArgumentException("page " + pageId + " is not resident in the buffer pool");
         }
         return frameId;
     }
@@ -49,13 +59,11 @@ public class BufferPool {
         int victimFrameId = victim.getAsInt();
         Frame oldFrame = frames[victimFrameId];
         int oldPageId = oldFrame.getPageId();
-        if (oldFrame.isDirty()) {
-            try {
-                diskManager.write(oldPageId, oldFrame.getData());
-            } catch (IOException e) {
-                throw new RuntimeException("error while writing page " + oldPageId + " to disk", e);
-            }
-            oldFrame.clearDirty();
+        try {
+            writeBack(oldFrame);
+        } catch (StorageException e) {
+            replacer.markEvictable(victimFrameId);      //back to the tail on purpose: a failing write must not block evicting other frames.
+            throw e;
         }
         pageIdToFrameId.remove(oldPageId);
         return victimFrameId;
@@ -63,10 +71,10 @@ public class BufferPool {
 
     public Frame fetchPage(int pageId) {
         if (pageId < 0) {
-            throw new IllegalArgumentException("pageId out of range, got " + pageId);
+            throw new IllegalArgumentException("pageId must be non-negative, got " + pageId);
         }
-        if (pageIdToFrameId.containsKey(pageId)) {
-            int frameId = pageIdToFrameId.get(pageId);
+        int frameId = pageIdToFrameId.getOrDefault(pageId, -1);
+        if (frameId != -1) {
             frames[frameId].pin();
             replacer.markNonEvictable(frameId);
             return frames[frameId];
@@ -75,7 +83,7 @@ public class BufferPool {
         try {
             localRead = diskManager.read(pageId);
         } catch (IOException e) {
-            throw new RuntimeException("could not read the page with page id " + pageId, e);
+            throw new StorageException("error while reading page " + pageId + " from disk", e);
         }
         int newFrameId = acquireFrame();
         Frame newFrame = frames[newFrameId];
@@ -93,7 +101,7 @@ public class BufferPool {
             pageId = diskManager.allocatePage();
         } catch (IOException e) {
             freeList.push(newFrameId);
-            throw new RuntimeException("could not allocate page", e);
+            throw new StorageException("error while allocating a new page on disk for frame " + newFrameId, e);
         }
         Frame newFrame = frames[newFrameId];
         newFrame.zeroData();
@@ -104,9 +112,6 @@ public class BufferPool {
     }
 
     public void unpinPage(int pageId, boolean dirty) {
-        if (pageId < 0) {
-            throw new IllegalArgumentException("page id out of bounds, got " + pageId);
-        }
         int frameId = frameIdOf(pageId);
         Frame frame = frames[frameId];
         frame.unpin();
@@ -119,24 +124,13 @@ public class BufferPool {
     }
 
     public void flushPage(int pageId) {
-        if (pageId < 0) {
-            throw new IllegalArgumentException("page id out of bounds, got " + pageId);
-        }
         int frameId = frameIdOf(pageId);
         Frame frame = frames[frameId];
-        if (frame.isDirty()) {
-            try {
-                diskManager.write(pageId, frame.getData());
-            } catch (IOException e) {
-                throw new RuntimeException("error while writing page " + pageId + " to disk", e);
-            }
-        }
-        frame.clearDirty();
+        writeBack(frame);
     }
 
     public void flushAll() {
-        final Set<Integer> keySet = pageIdToFrameId.keySet();
-        for (int key : keySet) {
+        for (int key : pageIdToFrameId.keySet()) {
             flushPage(key);
         }
     }

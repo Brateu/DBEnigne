@@ -13,12 +13,13 @@ import static java.nio.file.StandardOpenOption.*;
 public class DiskManager implements Closeable {
 
     public static final int PAGE_SIZE = 4096;
-
     private final FileChannel channel;
+    private int numPages;
 
     public DiskManager(Path path) throws IOException {
         Objects.requireNonNull(path, "path must not be null");
         channel = FileChannel.open(path, READ, WRITE, CREATE);
+        this.numPages = (int) (channel.size() / PAGE_SIZE);
     }
 
     public byte[] read(int pageId) throws IOException {
@@ -47,11 +48,12 @@ public class DiskManager implements Closeable {
         int pageId = getNumPages();
         byte[] emptyPage = new byte[PAGE_SIZE];
         writeRaw(pageId, emptyPage);
+        this.numPages++;
         return pageId;
     }
 
-    public int getNumPages() throws IOException {
-        return (int) (channel.size() / PAGE_SIZE);
+    public int getNumPages() {
+        return this.numPages;
     }
 
     public void sync() throws IOException {
@@ -72,10 +74,8 @@ public class DiskManager implements Closeable {
     }
 
     private void checkPageId(int pageId) throws IOException {
-        int numPages = getNumPages();
-        if (pageId < 0 || pageId >= numPages) {
-            throw new IllegalArgumentException("pageId " + pageId + " is out of range, file has " + numPages + " pages");
+        if (pageId < 0 || pageId >= getNumPages()) {
+            throw new IllegalArgumentException("pageId " + pageId + " is out of range, file has " + getNumPages() + " pages");
         }
     }
 }
-

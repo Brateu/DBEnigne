@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.channels.ClosedChannelException;
 import java.nio.file.Path;
 
 import static db.storage.DiskManager.PAGE_SIZE;
@@ -322,5 +323,61 @@ class BufferPoolTest {
     @Test
     void flushAllOnEmptyPoolDoesNothing() {
         assertDoesNotThrow(() -> pool(2).flushAll());
+    }
+
+    // ---- disk failures ----
+    // Closing the DiskManager makes every later channel call throw ClosedChannelException (an IOException),
+    // which is an easy way to simulate a failing disk without a fake DiskManager.
+
+    @Test
+    void fetchMissOnFailingDiskThrowsStorageExceptionWithCause() throws Exception {
+        dm.allocatePage();
+        BufferPool bp = pool(2);
+        dm.close();
+
+        StorageException e = assertThrows(StorageException.class, () -> bp.fetchPage(0));
+        assertInstanceOf(ClosedChannelException.class, e.getCause());
+    }
+
+    @Test
+    void failedNewPageReturnsFrameToFreeList() throws Exception {
+        // Pool of 1: if the failed allocation leaked the only frame, the second attempt would
+        // throw "pool exhausted" (ISE) instead of failing on the disk again.
+        BufferPool bp = pool(1);
+        dm.close();
+
+        assertThrows(StorageException.class, bp::newPage);
+        assertThrows(StorageException.class, bp::newPage);
+        assertEquals(0, dm.getNumPages());
+    }
+
+    @Test
+    void failedWriteBackKeepsVictimResidentAndEvictable() throws Exception {
+        // Pool of 1 holding dirty page 0. Eviction must write it back, and the disk is failing.
+        BufferPool bp = pool(1);
+        Frame frame = bp.newPage();
+        write(frame, patternPage(6));
+        bp.unpinPage(0, true);
+        dm.close();
+
+        assertThrows(StorageException.class, bp::newPage);
+
+        // Still evictable: a second eviction attempt fails on the disk again, not with "pool exhausted".
+        assertThrows(StorageException.class, bp::newPage);
+        // Still resident with its unsaved bytes: the hit path needs no disk.
+        assertSame(frame, bp.fetchPage(0));
+        assertArrayEquals(patternPage(6), frame.getData());
+        assertTrue(frame.isDirty());
+    }
+
+    @Test
+    void failedFlushKeepsPageDirty() throws Exception {
+        BufferPool bp = pool(2);
+        Frame frame = bp.newPage();
+        bp.unpinPage(0, true);
+        dm.close();
+
+        assertThrows(StorageException.class, () -> bp.flushPage(0));
+        assertTrue(frame.isDirty());
     }
 }

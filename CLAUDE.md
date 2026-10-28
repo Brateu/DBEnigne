@@ -58,23 +58,25 @@ A custom database engine built from scratch in Java as a long-term learning and 
 ## Current phase
 **Phase 1 — Storage Engine (page-based).** Resume point as of 2026-10-27.
 
-Done and tested (74 tests pass):
+Done and tested (78 tests pass):
 - `db/storage/DiskManager` — FileChannel positional I/O, `checkPageId` helper (DiskManagerTest, 13)
 - `db/storage/Frame` — private fields; package-private pin/unpin/markDirty/clearDirty/reset; reset throws if pinned or dirty (FrameTest, 10)
 - `db/util/DoublyLinkedList` — my own, null-based, guard in remove, `addLast` returns Node (DoublyLinkedListTest, 14)
 - `db/storage/LruReplacer` — implements `Replacer` interface; list + HashMap; `markEvictable` = add candidate, `markNonEvictable` = remove candidate, `victim()` → OptionalInt (LruReplacerTest, 13, incl. randomized model test)
 
-- `db/storage/BufferPool` — fields `pageIdToFrameId`, `freeList`, `Replacer replacer`; private `acquireFrame` (free list → victim → write back if dirty + clearDirty → remove old pageId) and `frameIdOf`; `fetchPage` reads disk before acquiring a frame; `newPage` acquires frame before `allocatePage` and pushes the frame back on failure; `unpinPage` ORs dirty, marks evictable at pin count 0; `flushPage`/`flushAll` (iterates map keys) (BufferPoolTest, 24)
+- `db/storage/BufferPool` — fields `pageIdToFrameId`, `freeList`, `Replacer replacer`; private `acquireFrame` (free list → victim → write back if dirty + clearDirty → remove old pageId) and `frameIdOf`; `fetchPage` reads disk before acquiring a frame; `newPage` acquires frame before `allocatePage` and pushes the frame back on failure; `unpinPage` ORs dirty, marks evictable at pin count 0; `flushPage`/`flushAll` (iterates map keys); I/O wrapped in `StorageException` (BufferPoolTest, 28, incl. closed-disk failure tests)
+- `DiskManager` caches `numPages` (updated in `allocatePage` after the write succeeds)
 - `Frame.zeroData()` added (no dedicated FrameTest yet; covered via BufferPoolTest)
 
-**Next:** slotted heap page. Open idea: dedicated unchecked `StorageException` instead of wrapping `IOException` in plain `RuntimeException`.
+**Next:** slotted heap page (`HeapPage` wrapping a frame's `byte[]`). Plan: settle deleted-slot marker + fresh-page init, Claude writes HeapPageTest first, then I implement. After that: page guard (AutoCloseable auto-unpin) before `HeapFile`.
 
 Already explained (don't re-explain unless asked): pages vs files, slotted pages/fragmentation, whole-page writes, read/write loop, FileChannel.read return values, sync, JUnit basics, model-based testing, LRU in depth, pin count vs replacer pin/unpin, lazy eviction.
 
 ## Design decisions
 - Page-based storage, `PAGE_SIZE = 4096`.
 - Buffer pool with LRU replacement.
-- Exception conventions: null → NPE (`Objects.requireNonNull`), bad value → IAE, wrong state → ISE, empty → NoSuchElementException. Check before mutating. Messages include the offending values. Private helpers don't validate.
+- Exception conventions: null → NPE (`Objects.requireNonNull`), bad value → IAE, wrong state → ISE, empty → NoSuchElementException, I/O failure → `StorageException` (unchecked, always wraps the cause; `DiskManager` itself keeps checked `IOException`, `BufferPool` translates). Check before mutating. Messages include the offending values. Private helpers don't validate.
+- Failure paths undo reservations: a method that takes a frame out of the pool's bookkeeping and then fails must put it back (`newPage` → `freeList.push`, `acquireFrame` write-back failure → `markEvictable`).
 - Under consideration (not decided): one file per table/index.
 
 ## Tech stack

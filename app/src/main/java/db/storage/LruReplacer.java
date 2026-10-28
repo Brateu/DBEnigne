@@ -50,7 +50,6 @@ public class LruReplacer implements Replacer {
         return OptionalInt.of(frameId);
     }
 
-    @Override
     public int size() {
         return list.size();
     }
