@@ -58,7 +58,7 @@ A custom database engine built from scratch in Java as a long-term learning and 
 ## Current phase
 **Phase 1 — Storage Engine (page-based).** Resume point as of 2026-10-27.
 
-Done and tested (78 tests pass):
+Done and tested (100 tests pass):
 - `db/storage/DiskManager` — FileChannel positional I/O, `checkPageId` helper (DiskManagerTest, 13)
 - `db/storage/Frame` — private fields; package-private pin/unpin/markDirty/clearDirty/reset; reset throws if pinned or dirty (FrameTest, 10)
 - `db/util/DoublyLinkedList` — my own, null-based, guard in remove, `addLast` returns Node (DoublyLinkedListTest, 14)
@@ -68,7 +68,10 @@ Done and tested (78 tests pass):
 - `DiskManager` caches `numPages` (updated in `allocatePage` after the write succeeds)
 - `Frame.zeroData()` added (no dedicated FrameTest yet; covered via BufferPoolTest)
 
-**Next:** slotted heap page (`HeapPage` wrapping a frame's `byte[]`). Plan: settle deleted-slot marker + fresh-page init, Claude writes HeapPageTest first, then I implement. After that: page guard (AutoCloseable auto-unpin) before `HeapFile`.
+- **PageId refactor done:** `PageId(fileId, pageNo)` record (validates ≥ 0; PageIdTest, 6); `StorageManager` (`open` creates/returns the one instance per fileId, `get` throws IAE if not open, `close` closes all with `addSuppressed`; StorageManagerTest, 9); `Frame` holds `PageId` (`null` = empty, `reset` rejects null; FrameTest, 12); `BufferPool` takes a `StorageManager`, keyed by `PageId`, `newPage(fileId)` looks up the file before `acquireFrame` (BufferPoolTest, 33, incl. two-file tests).
+- Note for later: when a single file can be dropped/closed, evict its pages from the pool first (writeBack on a closed file throws IAE, which `acquireFrame` doesn't catch).
+
+**Now:** slotted heap page (`HeapPage` wrapping a frame's `byte[]`). Plan: settle deleted-slot marker + fresh-page init, Claude writes HeapPageTest first, then I implement. After that: page guard (AutoCloseable auto-unpin) before `HeapFile`.
 
 Already explained (don't re-explain unless asked): pages vs files, slotted pages/fragmentation, whole-page writes, read/write loop, FileChannel.read return values, sync, JUnit basics, model-based testing, LRU in depth, pin count vs replacer pin/unpin, lazy eviction.
 
@@ -77,7 +80,8 @@ Already explained (don't re-explain unless asked): pages vs files, slotted pages
 - Buffer pool with LRU replacement.
 - Exception conventions: null → NPE (`Objects.requireNonNull`), bad value → IAE, wrong state → ISE, empty → NoSuchElementException, I/O failure → `StorageException` (unchecked, always wraps the cause; `DiskManager` itself keeps checked `IOException`, `BufferPool` translates). Check before mutating. Messages include the offending values. Private helpers don't validate.
 - Failure paths undo reservations: a method that takes a frame out of the pool's bookkeeping and then fails must put it back (`newPage` → `freeList.push`, `acquireFrame` write-back failure → `markEvictable`).
-- Under consideration (not decided): one file per table/index.
+- **One file per table/index, Postgres-style.** Buffer pool keyed by `PageId(fileId, pageNo)` (like Postgres BufferTag); a storage manager maps `fileId → DiskManager` (like smgr); `DiskManager` stays one-file. Heap page mimics Postgres layout (`lower`/`upper`, line pointers, `lsn` in header, `isNew()` for zeroed pages). `RecordId = (pageNo, slotId)` within a table (like ctid).
+- **Deferred until the whole engine works (scalability upgrades):** 1 GB segment files, forks (free space map / visibility map), TOAST, catalog stored as tables (pg_class-style). MVCC tuple headers come in Phase 4 — leave room in the tuple layout.
 
 ## Tech stack
 - Language: Java

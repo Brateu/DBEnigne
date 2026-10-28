@@ -7,11 +7,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class FrameTest {
 
+    private static final PageId P3 = new PageId(0, 3);
+    private static final PageId P7 = new PageId(0, 7);
+
     @Test
     void newFrameIsEmpty() {
         Frame frame = new Frame();
 
-        assertEquals(Frame.NO_PAGE, frame.getPageId());
+        assertNull(frame.getPageId());
         assertEquals(0, frame.getPinCount());
         assertFalse(frame.isDirty());
         assertEquals(PAGE_SIZE, frame.getData().length);
@@ -61,34 +64,44 @@ class FrameTest {
     @Test
     void resetSwitchesCleanUnpinnedFrameToNewPage() {
         Frame frame = new Frame();
-        frame.reset(3);
+        frame.reset(P3);
 
-        frame.reset(7);
+        frame.reset(P7);
 
-        assertEquals(7, frame.getPageId());
+        assertEquals(P7, frame.getPageId());
         assertEquals(0, frame.getPinCount());
         assertFalse(frame.isDirty());
     }
 
     @Test
+    void resetRejectsNull() {
+        // A mapped frame holding null would look empty and NPE later during eviction.
+        Frame frame = new Frame();
+        frame.reset(P3);
+
+        assertThrows(NullPointerException.class, () -> frame.reset(null));
+        assertEquals(P3, frame.getPageId());
+    }
+
+    @Test
     void resetPinnedFrameThrows() {
         Frame frame = new Frame();
-        frame.reset(3);
+        frame.reset(P3);
         frame.pin();
 
-        assertThrows(IllegalStateException.class, () -> frame.reset(7));
-        assertEquals(3, frame.getPageId());
+        assertThrows(IllegalStateException.class, () -> frame.reset(P7));
+        assertEquals(P3, frame.getPageId());
         assertEquals(1, frame.getPinCount());
     }
 
     @Test
     void resetDirtyFrameThrows() {
         Frame frame = new Frame();
-        frame.reset(3);
+        frame.reset(P3);
         frame.markDirty();
 
-        assertThrows(IllegalStateException.class, () -> frame.reset(7));
-        assertEquals(3, frame.getPageId());
+        assertThrows(IllegalStateException.class, () -> frame.reset(P7));
+        assertEquals(P3, frame.getPageId());
         assertTrue(frame.isDirty());
     }
 
@@ -96,15 +109,15 @@ class FrameTest {
     void resetAfterWriteBackSequenceSucceeds() {
         // The order the buffer pool must follow when evicting: unpin, write back, clear dirty, reset.
         Frame frame = new Frame();
-        frame.reset(3);
+        frame.reset(P3);
         frame.pin();
         frame.markDirty();
 
         frame.unpin();
         frame.clearDirty();
-        frame.reset(7);
+        frame.reset(P7);
 
-        assertEquals(7, frame.getPageId());
+        assertEquals(P7, frame.getPageId());
     }
 
     @Test
@@ -113,9 +126,21 @@ class FrameTest {
         byte[] before = frame.getData();
         before[0] = 42;
 
-        frame.reset(5);
+        frame.reset(P3);
 
         assertSame(before, frame.getData());
         assertEquals(42, frame.getData()[0]);
+    }
+
+    @Test
+    void zeroDataClearsEveryByteInPlace() {
+        Frame frame = new Frame();
+        byte[] data = frame.getData();
+        java.util.Arrays.fill(data, (byte) 9);
+
+        frame.zeroData();
+
+        assertSame(data, frame.getData());
+        assertArrayEquals(new byte[PAGE_SIZE], frame.getData());
     }
 }

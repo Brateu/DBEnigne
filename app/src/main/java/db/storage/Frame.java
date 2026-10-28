@@ -1,19 +1,19 @@
 package db.storage;
 
 import static db.storage.DiskManager.PAGE_SIZE;
+import static java.util.Objects.requireNonNull;
 
 public class Frame {
 
-    public static final int NO_PAGE = -1;
     private final byte[] data;
-    private int pageId;
+    private PageId pageId;
     private int pinCount;
     private boolean dirty;
 
     public Frame() {
         this.data = new byte[PAGE_SIZE];
-        this.pageId = NO_PAGE;
         this.pinCount = 0;
+        this.pageId = null;
         this.dirty = false;
     }
 
@@ -21,7 +21,7 @@ public class Frame {
         return data;
     }
 
-    public int getPageId() {
+    public PageId getPageId() {
         return pageId;
     }
 
@@ -44,7 +44,8 @@ public class Frame {
         pinCount--;
     }
 
-    void reset(int pageId) {
+    void reset(PageId pageId) {
+        requireNonNull(pageId, "pageId must not be null");
         if (getPinCount() != 0) {
             throw new IllegalStateException("cannot reset page " + getPageId() + ", pin count is " + getPinCount());
         }
