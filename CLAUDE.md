@@ -19,41 +19,55 @@ A custom database engine built from scratch in Java as a long-term learning and 
 - Backend engineering focus.
 
 ## Architecture roadmap
+Postgres-style throughout. Primary reference: Petrov, *Database Internals* (ch. 3 file formats, ch. 2/4 B-trees, ch. 5 buffer/WAL/concurrency, ch. 6–7 variants, ch. 8–14 distributed). Gaps filled by CMU 15-445 (execution), Postgres docs/source, Hellerstein's *Architecture of a Database System*.
 
-### Phase 1 — Storage Engine
-- Log-structured or page-based storage
-- Basic operations: get, put, delete
-- Disk persistence (not just in-memory)
-- Serialization of records to bytes
+**Workflow for every major choice:** discuss pros/cons → I pick → I implement → tag. Alternatives live as **interface + implementations** only where Postgres has a pluggable point or we'll benchmark both (Replacer, table AM, index AM, concurrency control). **Git tags** for milestones, **branches** (`exp/...`) for throwaway experiments.
 
-### Phase 2 — Indexing
-- B-tree or LSM tree implementation
-- Eliminate full-scan lookups
-- Index maintenance on insert/update/delete
+### Phase 1 — Storage → tag `v0.1-storage`
+1. `HeapPage` — Postgres layout: header (`lsn`, `checksum`, `flags`, `lower`, `upper`, `special`, version), line pointers (offset/len/flags: UNUSED/NORMAL/DEAD; REDIRECT later for HOT), `isNew()` + init
+2. Page checksum — CRC32C computed on write-out, verified on read → `StorageException`
+3. Page guards — AutoCloseable read/write guards (auto-unpin; latches added in 4.7)
+4. Tuple format — header with reserved `xmin`/`xmax`/`ctid`/infomask/null bitmap; types INT, BIGINT, BOOLEAN, VARCHAR/TEXT, NULL; `Schema` + serializer
+5. `HeapFile` — insert/get/update/delete by `RecordId`, seq-scan iterator, naive free-space search (FSM later)
+6. Minimal catalog — table name → fileId + schema, persisted in a catalog file
+7. (Variant) CLOCK replacer, benchmark vs LRU
 
-### Phase 3 — SQL-like Query Parser
-- Lexer + parser for basic SQL (SELECT, INSERT, UPDATE, DELETE)
-- AST representation of queries
-- Query execution against the storage engine
-- Leverage compiler-building experience from MicroJava
+### Phase 2 — Indexing (Postgres nbtree) → tag `v0.2-index`
+1. B+tree page layouts — internal/leaf, right-sibling link + high key (Lehman–Yao), typed key comparison
+2. Search, insert with splits up to root, range-scan iterator over sibling links
+3. Delete = mark dead, no eager merge (page deletion in VACUUM)
+4. Index AM interface, `CREATE INDEX`, unique constraints, maintenance on heap insert/update/delete
+5. (Variants) hash index; LSM tree on a branch (book ch. 7)
 
-### Phase 4 — Transactions & Concurrency Control
-- Write-ahead logging (WAL)
-- MVCC or lock-based concurrency control
-- ACID guarantees
-- Crash recovery from WAL
+### Phase 3 — SQL (parser → analyzer → planner → executor) → tag `v0.3-sql`
+1. Lexer + parser → AST: CREATE/DROP TABLE, CREATE INDEX, INSERT, SELECT (WHERE/ORDER BY/LIMIT), UPDATE, DELETE
+2. Analyzer — resolve names against catalog, type-check
+3. Executor — Volcano iterators: SeqScan, IndexScan, Filter, Projection, Insert/Update/Delete, Sort, Limit, NestedLoopJoin, HashJoin, Aggregation/GROUP BY
+4. Rule-based planner (indexed predicate → IndexScan)
+5. Local REPL
 
-### Phase 5 — Wire Protocol
-- TCP server so external clients can connect
-- Simple text-based or binary protocol
-- Connection handling with threads
-- Basic client library or CLI tool
+### Phase 4 — Transactions & concurrency → tag `v0.4-txn`
+1. WAL manager — append, assign LSNs, `flushUpTo(lsn)`, hooked into buffer pool write-back (WAL rule)
+2. Redo-only crash recovery (`record.lsn > page.lsn`), full-page images after checkpoint
+3. Checkpoints + log truncation
+4. Transaction manager — xids, BEGIN/COMMIT/ABORT, commit log (CLOG)
+5. MVCC visibility — snapshots, xmin/xmax rules; Read Committed + Repeatable Read
+6. Row locks (via xmax), lock manager, deadlock detection (wait-for graph)
+7. Thread safety — buffer pool latch, page latches in guards, Lehman–Yao concurrent B-tree
+8. VACUUM — dead tuples + their index entries
+9. (Variants) strict 2PL behind a concurrency-control interface; SSI stretch
 
-### Phase 6 — Extras (stretch goals)
-- Authentication and basic permissions
-- Query planner / optimizer
-- Replication
-- Prepared statements
+### Phase 5 — Network → tag `v0.5-server`
+1. TCP server, thread per connection, per-session transaction state
+2. Own framed protocol first, then a subset of the real Postgres wire protocol v3 (so `psql`/JDBC can connect)
+3. Small CLI client
+
+### Phase 6 — Extras
+- Auth (password → SCRAM), GRANT/REVOKE
+- Cost-based optimizer: ANALYZE stats (histograms, n_distinct), join ordering
+- Prepared statements (extended query protocol)
+- Streaming replication (ship WAL to a standby); optionally Raft (book ch. 14)
+- Deferred scalability: FSM/VM forks, TOAST, 1 GB segments, catalog as tables, HOT updates, index-organized table AM
 
 ## Current phase
 **Phase 1 — Storage Engine (page-based).** Resume point as of 2026-10-27.
@@ -71,16 +85,23 @@ Done and tested (100 tests pass):
 - **PageId refactor done:** `PageId(fileId, pageNo)` record (validates ≥ 0; PageIdTest, 6); `StorageManager` (`open` creates/returns the one instance per fileId, `get` throws IAE if not open, `close` closes all with `addSuppressed`; StorageManagerTest, 9); `Frame` holds `PageId` (`null` = empty, `reset` rejects null; FrameTest, 12); `BufferPool` takes a `StorageManager`, keyed by `PageId`, `newPage(fileId)` looks up the file before `acquireFrame` (BufferPoolTest, 33, incl. two-file tests).
 - Note for later: when a single file can be dropped/closed, evict its pages from the pool first (writeBack on a closed file throws IAE, which `acquireFrame` doesn't catch).
 
-**Now:** slotted heap page (`HeapPage` wrapping a frame's `byte[]`). Plan: settle deleted-slot marker + fresh-page init, Claude writes HeapPageTest first, then I implement. After that: page guard (AutoCloseable auto-unpin) before `HeapFile`.
+- **Generic slotted page done (173 tests pass):** `db/storage/page/Page` — stateless view over the frame's `byte[]` (one `ByteBuffer` field, absolute get/put, big-endian, unsigned 16-bit reads). 24-byte header (lsn 0/8B, checksum 8/4B, flags 12, lower 14, upper 16, special 18, version 20, reserved 22). Line pointers 4B bit-packed (offset bits 0–14, state 15–16, length 17–31). `LinePointerState` enum (UNUSED 0, NORMAL 1, REDIRECT 2, DEAD 3; `fromCode`). API: `isNew` (upper == 0), `init(specialSize)` (zeroes + formats; max special = PAGE_SIZE − 24 − 4), header getters, `setLsn`/`setChecksum` public, flags protected, `slotCount`, `freeSpace` (upper − lower), `maxItemSize`, `canFit(length)` (fast path on freeSpace, else private `reclaimableSpace` = special − lower − live bytes), `insert` (auto-compacts after all checks), `get` (copy), `stateOf`, `delete` (→ DEAD, keeps offset/len, slots never reused in Phase 1), `update` (shrink in place; grow: check `reclaimable + oldLen`, mark DEAD, compact if needed, place below upper, same slot), package-private `compact`. Private `checkSlot`, `readLinePointer`/`writeLinePointer` + `LinePointer` record. (PageTest 70, LinePointerStateTest 3)
+- IAE vs ISE rule of thumb: would the same call succeed on a different/emptier page? yes → ISE (page state), no → IAE (bad argument).
 
-Already explained (don't re-explain unless asked): pages vs files, slotted pages/fragmentation, whole-page writes, read/write loop, FileChannel.read return values, sync, JUnit basics, model-based testing, LRU in depth, pin count vs replacer pin/unpin, lazy eviction.
+- Header validation done: constructor runs private `validateHeader()` for non-new pages (`24 ≤ lower ≤ upper ≤ special ≤ PAGE_SIZE`, `(lower − 24) % 4 == 0`, version == 1) → `CorruptPageException extends StorageException` (message-only constructor added to `StorageException`). 184 tests pass (PageTest 81).
+
+**Now:** `HeapPage extends Page` (thin: `init()` → `super.init(0)`, constructor checks special == PAGE_SIZE → `CorruptPageException`). After that: checksum (1.2), page guards, tuple format, `HeapFile`.
+
+Already explained (don't re-explain unless asked): pages vs files, slotted pages/fragmentation, whole-page writes, read/write loop, FileChannel.read return values, sync, JUnit basics, model-based testing, LRU in depth, pin count vs replacer pin/unpin, lazy eviction, heap vs index-organized storage, WAL (steal/no-force, redo-only thanks to MVCC, checkpoints, full-page images), LSN/pageLSN, Postgres-style MVCC (xmin/xmax/ctid, snapshots, CLOG, VACUUM).
 
 ## Design decisions
 - Page-based storage, `PAGE_SIZE = 4096`.
 - Buffer pool with LRU replacement.
-- Exception conventions: null → NPE (`Objects.requireNonNull`), bad value → IAE, wrong state → ISE, empty → NoSuchElementException, I/O failure → `StorageException` (unchecked, always wraps the cause; `DiskManager` itself keeps checked `IOException`, `BufferPool` translates). Check before mutating. Messages include the offending values. Private helpers don't validate.
+- Exception conventions: null → NPE (`Objects.requireNonNull`), bad value → IAE, wrong state → ISE, empty → NoSuchElementException, I/O failure → `StorageException` (unchecked, wraps the cause when there is one; detected on-disk corruption → `CorruptPageException`; `DiskManager` itself keeps checked `IOException`, `BufferPool` translates). Check before mutating. Messages include the offending values. Private helpers don't validate.
 - Failure paths undo reservations: a method that takes a frame out of the pool's bookkeeping and then fails must put it back (`newPage` → `freeList.push`, `acquireFrame` write-back failure → `markEvictable`).
 - **One file per table/index, Postgres-style.** Buffer pool keyed by `PageId(fileId, pageNo)` (like Postgres BufferTag); a storage manager maps `fileId → DiskManager` (like smgr); `DiskManager` stays one-file. Heap page mimics Postgres layout (`lower`/`upper`, line pointers, `lsn` in header, `isNew()` for zeroed pages). `RecordId = (pageNo, slotId)` within a table (like ctid).
+- **Heap storage, not index-organized:** rows in heap files, every index (incl. PK) a separate B+tree → `RecordId`. Each phase works without the next; an index-organized variant can come later as a second table AM.
+- **Postgres-style MVCC + redo-only WAL:** versions live in the heap (xmin/xmax/ctid), abort = flip CLOG status, so recovery needs no undo. Buffer pool is steal/no-force; write-back must call `wal.flushUpTo(pageLsn)` once WAL exists.
 - **Deferred until the whole engine works (scalability upgrades):** 1 GB segment files, forks (free space map / visibility map), TOAST, catalog stored as tables (pg_class-style). MVCC tuple headers come in Phase 4 — leave room in the tuple layout.
 
 ## Tech stack
