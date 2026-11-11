@@ -1,5 +1,8 @@
 package db.storage;
 
+import db.storage.page.CorruptPageException;
+import db.storage.page.Page;
+
 import java.io.IOException;
 import java.util.*;
 
@@ -33,6 +36,7 @@ public class BufferPool {
         PageId pageId = frame.getPageId();
         if (frame.isDirty()) {
             try {
+                Page.stampChecksum(frame.getData(), pageId.pageNo());
                 diskOf(pageId).write(pageId.pageNo(), frame.getData());
             } catch (IOException e) {
                 throw new StorageException("error while writing page " + pageId + " to disk", e);
@@ -88,6 +92,10 @@ public class BufferPool {
         } catch (IOException e) {
             throw new StorageException("error while reading page " + pageId + " from disk", e);
         }
+        if (!Page.verifyChecksum(localRead, pageId.pageNo())) {
+            throw new CorruptPageException("checksum mismatch reading page " + pageId);
+        }
+
         int newFrameId = acquireFrame();
         Frame newFrame = frames[newFrameId];
         System.arraycopy(localRead, 0, newFrame.getData(), 0, localRead.length);

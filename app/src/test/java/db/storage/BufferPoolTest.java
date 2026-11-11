@@ -1,5 +1,7 @@
 package db.storage;
 
+import db.storage.page.CorruptPageException;
+import db.storage.page.Page;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +50,32 @@ class BufferPoolTest {
             page[i] = (byte) (i + seed);
         }
         return page;
+    }
+
+    /** A page as the pool would have written it: the pattern with a valid checksum for pageNo in bytes 8..11. */
+    private static byte[] stampedPage(int seed, int pageNo) {
+        byte[] page = patternPage(seed);
+        Page.stampChecksum(page, pageNo);
+        return page;
+    }
+
+    /**
+     * The pool stamps the checksum into bytes 8..11 on write-back, so a page that went through the
+     * pool equals what the caller wrote everywhere except those 4 bytes.
+     */
+    private static void assertSameIgnoringChecksum(byte[] expected, byte[] actual) {
+        assertEquals(expected.length, actual.length);
+        for (int i = 0; i < expected.length; i++) {
+            if (i < 8 || i >= 12) {
+                assertEquals(expected[i], actual[i], "byte " + i + " differs");
+            }
+        }
+    }
+
+    /** Disk bytes written by the pool: caller's content plus a checksum that verifies for this pageNo. */
+    private static void assertWrittenByPool(byte[] expected, byte[] onDisk, int pageNo) {
+        assertSameIgnoringChecksum(expected, onDisk);
+        assertTrue(Page.verifyChecksum(onDisk, pageNo), "page " + pageNo + " on disk has no valid checksum");
     }
 
     /** Simulates a caller modifying a page it has pinned. */
@@ -123,13 +151,13 @@ class BufferPoolTest {
     @Test
     void fetchPageMissReadsBytesFromDisk() throws Exception {
         int pageNo = dm.allocatePage();
-        dm.write(pageNo, patternPage(3));
+        dm.write(pageNo, stampedPage(3, pageNo));
         BufferPool bp = pool(2);
 
         Frame frame = bp.fetchPage(pid(pageNo));
 
         assertEquals(pid(pageNo), frame.getPageId());
-        assertArrayEquals(patternPage(3), frame.getData());
+        assertArrayEquals(stampedPage(3, pageNo), frame.getData());
         assertEquals(1, frame.getPinCount());
     }
 
@@ -205,8 +233,8 @@ class BufferPoolTest {
         bp.unpinPage(b.getPageId(), true);
         bp.flushAll();
 
-        assertArrayEquals(patternPage(1), dm.read(0));
-        assertArrayEquals(patternPage(2), other.read(0));
+        assertWrittenByPool(patternPage(1), dm.read(0), 0);
+        assertWrittenByPool(patternPage(2), other.read(0), 0);
     }
 
     @Test
@@ -220,7 +248,7 @@ class BufferPoolTest {
 
         bp.newPage(FILE);
 
-        assertArrayEquals(patternPage(4), other.read(0));
+        assertWrittenByPool(patternPage(4), other.read(0), 0);
         assertArrayEquals(new byte[PAGE_SIZE], dm.read(0));
     }
 
@@ -277,8 +305,8 @@ class BufferPoolTest {
         bp.newPage(FILE);              // evicts page 0: must write it back first
         bp.unpinPage(pid(1), false);
 
-        assertArrayEquals(patternPage(5), dm.read(0));
-        assertArrayEquals(patternPage(5), bp.fetchPage(pid(0)).getData());
+        assertWrittenByPool(patternPage(5), dm.read(0), 0);
+        assertSameIgnoringChecksum(patternPage(5), bp.fetchPage(pid(0)).getData());   // verified on the way back in
     }
 
     @Test
@@ -307,7 +335,7 @@ class BufferPoolTest {
 
         bp.newPage(FILE);              // evicts page 0
 
-        assertArrayEquals(patternPage(9), dm.read(0));
+        assertWrittenByPool(patternPage(9), dm.read(0), 0);
     }
 
     @Test
@@ -350,7 +378,7 @@ class BufferPoolTest {
 
         bp.flushPage(pid(0));
 
-        assertArrayEquals(patternPage(4), dm.read(0));
+        assertWrittenByPool(patternPage(4), dm.read(0), 0);
         assertEquals(1, frame.getPinCount());
         assertSame(frame, bp.fetchPage(pid(0)));
     }
@@ -369,7 +397,7 @@ class BufferPoolTest {
         bp.unpinPage(pid(0), false);
         bp.newPage(FILE);              // evicts page 0
 
-        assertArrayEquals(patternPage(1), dm.read(0));
+        assertWrittenByPool(patternPage(1), dm.read(0), 0);
     }
 
     @Test
@@ -388,13 +416,139 @@ class BufferPoolTest {
 
         bp.flushAll();
 
-        assertArrayEquals(patternPage(10), dm.read(0));
-        assertArrayEquals(patternPage(20), dm.read(1));
+        assertWrittenByPool(patternPage(10), dm.read(0), 0);
+        assertWrittenByPool(patternPage(20), dm.read(1), 1);
     }
 
     @Test
     void flushAllOnEmptyPoolDoesNothing() {
         assertDoesNotThrow(() -> pool(2).flushAll());
+    }
+
+    // ---- checksums ----
+
+    @Test
+    void writeBackStampsChecksumForThePagesOwnPageNo() throws Exception {
+        BufferPool bp = pool(3);
+        bp.newPage(FILE);
+        write(bp.newPage(FILE), patternPage(8));
+        bp.unpinPage(pid(1), true);
+
+        bp.flushPage(pid(1));
+
+        byte[] onDisk = dm.read(1);
+        assertTrue(Page.verifyChecksum(onDisk, 1));
+        assertFalse(Page.verifyChecksum(onDisk, 0));
+    }
+
+    @Test
+    void fetchOfNeverWrittenNewPageAcceptsAllZeros() {
+        // allocatePage puts zeros on disk without a checksum; the pool must still accept that page.
+        BufferPool bp = pool(1);
+        bp.newPage(FILE);
+        bp.unpinPage(pid(0), false);
+        bp.newPage(FILE);              // evicts page 0 without writing it
+        bp.unpinPage(pid(1), false);
+
+        Frame frame = bp.fetchPage(pid(0));
+
+        assertArrayEquals(new byte[PAGE_SIZE], frame.getData());
+    }
+
+    @Test
+    void fetchOfCorruptedPageThrowsCorruptPageException() throws Exception {
+        BufferPool writer = pool(1);
+        write(writer.newPage(FILE), patternPage(2));
+        writer.unpinPage(pid(0), true);
+        writer.flushPage(pid(0));
+
+        byte[] onDisk = dm.read(0);
+        onDisk[1000] ^= 1;             // bit rot inside the tuple area
+        dm.write(0, onDisk);
+
+        CorruptPageException e = assertThrows(CorruptPageException.class, () -> pool(1).fetchPage(pid(0)));
+        assertInstanceOf(StorageException.class, e);
+        assertTrue(e.getMessage().contains(pid(0).toString()), "message should name the page, got: " + e.getMessage());
+    }
+
+    @Test
+    void corruptedPageDoesNotTakeAFrame() throws Exception {
+        // Pool of 1: verification runs before acquireFrame, so a failed fetch leaves the only frame free.
+        int pageNo = dm.allocatePage();
+        dm.write(pageNo, patternPage(5));   // non-zero and never stamped
+        BufferPool bp = pool(1);
+
+        assertThrows(CorruptPageException.class, () -> bp.fetchPage(pid(pageNo)));
+        assertThrows(CorruptPageException.class, () -> bp.fetchPage(pid(pageNo)));   // not cached either
+
+        assertDoesNotThrow(() -> bp.newPage(FILE));
+    }
+
+    @Test
+    void corruptedPageDoesNotEvictAResidentPage() throws Exception {
+        // Pool of 1 with an evictable dirty page: a corrupt fetch must fail before choosing a victim,
+        // so the resident page stays cached and unwritten.
+        dm.allocatePage();
+        dm.write(0, patternPage(5));   // corrupt page 0 on disk
+        BufferPool bp = pool(1);
+        Frame resident = bp.newPage(FILE);   // page 1
+        write(resident, patternPage(6));
+        bp.unpinPage(pid(1), true);
+
+        assertThrows(CorruptPageException.class, () -> bp.fetchPage(pid(0)));
+
+        assertSame(resident, bp.fetchPage(pid(1)));
+        assertTrue(resident.isDirty());
+        assertArrayEquals(new byte[PAGE_SIZE], dm.read(1));
+    }
+
+    @Test
+    void pageCopiedToWrongPositionIsDetected() throws Exception {
+        // Misdirected write: page 0's (valid) bytes end up at position 1.
+        BufferPool writer = pool(2);
+        write(writer.newPage(FILE), patternPage(3));
+        writer.newPage(FILE);
+        writer.unpinPage(pid(0), true);
+        writer.flushAll();
+        dm.write(1, dm.read(0));
+
+        BufferPool bp = pool(2);
+        assertDoesNotThrow(() -> bp.fetchPage(pid(0)));
+        assertThrows(CorruptPageException.class, () -> bp.fetchPage(pid(1)));
+    }
+
+    @Test
+    void pageCopiedToSamePageNoInAnotherFileIsNotDetected() throws Exception {
+        // Documents a design decision: the checksum mixes in pageNo but not fileId,
+        // so a page moved to the same position in another file still verifies.
+        DiskManager other = storage.open(OTHER_FILE);
+        BufferPool writer = pool(1);
+        write(writer.newPage(FILE), patternPage(3));
+        writer.unpinPage(pid(0), true);
+        writer.flushPage(pid(0));
+        other.allocatePage();
+        other.write(0, dm.read(0));
+
+        assertDoesNotThrow(() -> pool(1).fetchPage(new PageId(OTHER_FILE, 0)));
+    }
+
+    @Test
+    void stampedPageRoundTripsThroughEvictionAndFetch() {
+        // Write -> evict (stamp) -> fetch (verify) -> modify -> evict (restamp) -> fetch (verify).
+        BufferPool bp = pool(1);
+        write(bp.newPage(FILE), patternPage(1));
+        bp.unpinPage(pid(0), true);
+        bp.newPage(FILE);
+        bp.unpinPage(pid(1), false);
+
+        Frame frame = bp.fetchPage(pid(0));
+        assertSameIgnoringChecksum(patternPage(1), frame.getData());
+        write(frame, patternPage(2));
+        bp.unpinPage(pid(0), true);
+        bp.fetchPage(pid(1));
+        bp.unpinPage(pid(1), false);
+
+        assertSameIgnoringChecksum(patternPage(2), bp.fetchPage(pid(0)).getData());
     }
 
     // ---- disk failures ----
@@ -439,7 +593,7 @@ class BufferPoolTest {
         assertThrows(StorageException.class, () -> bp.newPage(FILE));
         // Still resident with its unsaved bytes: the hit path needs no disk.
         assertSame(frame, bp.fetchPage(pid(0)));
-        assertArrayEquals(patternPage(6), frame.getData());
+        assertSameIgnoringChecksum(patternPage(6), frame.getData());   // stamp happens in place before the write
         assertTrue(frame.isDirty());
     }
 
