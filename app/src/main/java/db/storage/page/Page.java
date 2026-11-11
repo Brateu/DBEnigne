@@ -55,7 +55,7 @@ public class Page {
         }
     }
 
-    public void init(int specialSize) {
+    protected void init(int specialSize) {
         if (specialSize < 0 || specialSize > PAGE_SIZE - HEADER_SIZE - LINE_POINTER_SIZE) {
             throw new IllegalArgumentException("specialSize must be between 0 and " + (PAGE_SIZE - HEADER_SIZE - LINE_POINTER_SIZE) + ", got " + specialSize);
         }

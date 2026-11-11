@@ -90,9 +90,19 @@ Done and tested (100 tests pass):
 
 - Header validation done: constructor runs private `validateHeader()` for non-new pages (`24 ≤ lower ≤ upper ≤ special ≤ PAGE_SIZE`, `(lower − 24) % 4 == 0`, version == 1) → `CorruptPageException extends StorageException` (message-only constructor added to `StorageException`). 184 tests pass (PageTest 81).
 
-**Now:** `HeapPage extends Page` (thin: `init()` → `super.init(0)`, constructor checks special == PAGE_SIZE → `CorruptPageException`). After that: checksum (1.2), page guards, tuple format, `HeapFile`.
+- `HeapPage extends Page` done: public constructor (`super(data)`, then non-new page with special != PAGE_SIZE → `CorruptPageException`), `init()` → `init(0)`; `Page.init(int)` is now `protected`. 195 tests pass (HeapPageTest 11).
 
-Already explained (don't re-explain unless asked): pages vs files, slotted pages/fragmentation, whole-page writes, read/write loop, FileChannel.read return values, sync, JUnit basics, model-based testing, LRU in depth, pin count vs replacer pin/unpin, lazy eviction, heap vs index-organized storage, WAL (steal/no-force, redo-only thanks to MVCC, checkpoints, full-page images), LSN/pageLSN, Postgres-style MVCC (xmin/xmax/ctid, snapshots, CLOG, VACUUM).
+**Now:** Phase 1.2 — page checksum. Decisions made (all as recommended):
+- CRC32C (`java.util.zip.CRC32C`), 32 bits stored in header bytes 8–11. Covers bytes `[0, 8)` + `[12, PAGE_SIZE)` (skips its own field, no mutation) **plus the pageNo** (catches misdirected writes; fileId not included).
+- Done in `BufferPool`, not `DiskManager` or the `Page` constructor. Always on, no flag. Stamped in place in the frame (revisit when latches arrive in 4.7).
+- All-zero pages (from `allocatePage`) are accepted; the zero scan runs only after a mismatch.
+- API, step 1 (I implement next) — static helpers on `Page` over a raw `byte[]`: `computeChecksum(byte[] data, int pageNo)` → int, `stampChecksum(byte[] data, int pageNo)` (writes bytes 8–11, big-endian), `verifyChecksum(byte[] data, int pageNo)` → boolean (match, or all zeros via private `isAllZeros`). Traps: `CRC32C.update(int)` uses only the low 8 bits — feed pageNo as 4 bytes; `getValue()` is a long → cast to int.
+- Step 2 — wire into `BufferPool`: `writeBack` stamps right before `write` (inside `if dirty`; covers eviction/flushPage/flushAll); `fetchPage` verifies right after `read`, **before** `acquireFrame` → `CorruptPageException("checksum mismatch reading page " + pageId)`; `newPage` unchanged.
+- Claude then: tests for the helpers (determinism, single-bit flip, pageNo 7 vs 263, bytes 8–11 ignored, all-zero accepted) and BufferPool (round trip, on-disk corruption → exception with no frame leaked, page copied to wrong position → mismatch); update the ~10 existing BufferPoolTests that compare raw disk bytes or write raw patterns to disk.
+
+After that: page guards, tuple format, `HeapFile`.
+
+Already explained (don't re-explain unless asked): pages vs files, slotted pages/fragmentation, whole-page writes, read/write loop, FileChannel.read return values, sync, JUnit basics, model-based testing, LRU in depth, pin count vs replacer pin/unpin, lazy eviction, heap vs index-organized storage, WAL (steal/no-force, redo-only thanks to MVCC, checkpoints, full-page images), LSN/pageLSN, Postgres-style MVCC (xmin/xmax/ctid, snapshots, CLOG, VACUUM), page layout (header/line pointers/items/special space), line-pointer bit packing with shifts and masks, reclaimable vs free space, the canFit fast path, update grow/shrink, why HeapPage is thin, checksums (what CRC32C is, why 32 bits, skipping its own field, mixing in pageNo).
 
 ## Design decisions
 - Page-based storage, `PAGE_SIZE = 4096`.
