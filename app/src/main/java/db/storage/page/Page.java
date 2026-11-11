@@ -3,6 +3,7 @@ package db.storage.page;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.NoSuchElementException;
+import java.util.zip.CRC32C;
 
 import static db.storage.DiskManager.PAGE_SIZE;
 import static java.util.Objects.requireNonNull;
@@ -14,6 +15,7 @@ public class Page {
     public static final int LAYOUT_VERSION = 1;
     private static final int LSN_OFFSET = 0;
     private static final int CHECKSUM_OFFSET = 8;
+    private static final int CHECKSUM_SIZE = 4;
     private static final int FLAGS_OFFSET = 12;
     private static final int LOWER_OFFSET = 14;
     private static final int UPPER_OFFSET = 16;
@@ -100,6 +102,46 @@ public class Page {
     protected void setFlags(int flags) {
         buffer.putShort(FLAGS_OFFSET, (short) flags);
     }
+
+    public static int computeChecksum(byte[] data, int pageNo) {
+        requireNonNull(data);
+        if (data.length != PAGE_SIZE) {
+            throw new IllegalArgumentException("data length " + data.length + " must be " + PAGE_SIZE);
+        }
+        if (pageNo < 0) {
+            throw new IllegalArgumentException("invalid page number, got " + pageNo);
+        }
+        CRC32C crc = new CRC32C();
+        byte[] four = ByteBuffer.allocate(4).putInt(pageNo).array();
+        crc.update(data, 0, CHECKSUM_OFFSET);
+        crc.update(data, CHECKSUM_OFFSET + CHECKSUM_SIZE, PAGE_SIZE - (CHECKSUM_OFFSET + CHECKSUM_SIZE));
+        crc.update(four);
+        return (int) crc.getValue();
+    }
+
+    public static void stampChecksum(byte[] data, int pageNo) {
+        int c = computeChecksum(data, pageNo);
+        ByteBuffer.wrap(data).putInt(CHECKSUM_OFFSET, c);
+    }
+
+    private static boolean isAllZeros(byte[] data) {
+        for (byte goat : data) {
+            if (goat != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean verifyChecksum(byte[] data, int pageNo) {
+        int created = computeChecksum(data, pageNo);
+        int stored = ByteBuffer.wrap(data).getInt(CHECKSUM_OFFSET);
+        if (created == stored) {
+            return true;
+        }
+        return isAllZeros(data);
+    }
+
 
     public int getChecksum() {
         return buffer.getInt(CHECKSUM_OFFSET);
