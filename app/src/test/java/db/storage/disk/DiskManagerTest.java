@@ -1,4 +1,4 @@
-package db.storage;
+package db.storage.disk;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -8,7 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 
-import static db.storage.DiskManager.PAGE_SIZE;
+import static db.storage.disk.DiskManager.PAGE_SIZE;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DiskManagerTest {

@@ -1,4 +1,4 @@
-package db.storage;
+package db.storage.disk;
 
 import java.io.Closeable;
 import java.io.EOFException;

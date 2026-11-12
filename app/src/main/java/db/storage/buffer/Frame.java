@@ -1,6 +1,8 @@
-package db.storage;
+package db.storage.buffer;
 
-import static db.storage.DiskManager.PAGE_SIZE;
+import db.storage.PageId;
+
+import static db.storage.disk.DiskManager.PAGE_SIZE;
 import static java.util.Objects.requireNonNull;
 
 public class Frame {

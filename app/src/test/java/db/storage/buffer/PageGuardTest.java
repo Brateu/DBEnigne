@@ -1,5 +1,8 @@
-package db.storage;
+package db.storage.buffer;
 
+import db.storage.PageId;
+import db.storage.disk.DiskManager;
+import db.storage.disk.StorageManager;
 import db.storage.page.CorruptPageException;
 import db.storage.page.Page;
 import org.junit.jupiter.api.AfterEach;
@@ -11,7 +14,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Arrays;
 
-import static db.storage.DiskManager.PAGE_SIZE;
+import static db.storage.disk.DiskManager.PAGE_SIZE;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**

@@ -1,6 +1,6 @@
 package db.storage.page;
 
-import static db.storage.DiskManager.PAGE_SIZE;
+import static db.storage.disk.DiskManager.PAGE_SIZE;
 
 public class HeapPage extends Page {
 

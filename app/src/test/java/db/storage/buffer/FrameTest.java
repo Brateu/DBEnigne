@@ -1,8 +1,9 @@
-package db.storage;
+package db.storage.buffer;
 
+import db.storage.PageId;
 import org.junit.jupiter.api.Test;
 
-import static db.storage.DiskManager.PAGE_SIZE;
+import static db.storage.disk.DiskManager.PAGE_SIZE;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FrameTest {

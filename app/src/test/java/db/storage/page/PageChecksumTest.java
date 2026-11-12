@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
 
-import static db.storage.DiskManager.PAGE_SIZE;
+import static db.storage.disk.DiskManager.PAGE_SIZE;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 

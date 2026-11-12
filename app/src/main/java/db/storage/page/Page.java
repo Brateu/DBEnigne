@@ -5,7 +5,7 @@ import java.util.Arrays;
 import java.util.NoSuchElementException;
 import java.util.zip.CRC32C;
 
-import static db.storage.DiskManager.PAGE_SIZE;
+import static db.storage.disk.DiskManager.PAGE_SIZE;
 import static java.util.Objects.requireNonNull;
 
 public class Page {

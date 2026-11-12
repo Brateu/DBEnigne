@@ -1,4 +1,4 @@
-package db.storage;
+package db.storage.buffer;
 
 import org.junit.jupiter.api.Test;
 

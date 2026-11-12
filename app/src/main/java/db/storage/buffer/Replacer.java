@@ -1,4 +1,4 @@
-package db.storage;
+package db.storage.buffer;
 
 import java.util.OptionalInt;
 

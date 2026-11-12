@@ -1,4 +1,4 @@
-package db.storage;
+package db.storage.buffer;
 
 import db.util.DoublyLinkedList;
 import db.util.DoublyLinkedList.Node;
