@@ -1,11 +1,11 @@
 package db.storage.buffer;
 
-import db.storage.PageId;
-import db.storage.StorageException;
+import db.exception.CorruptPageException;
+import db.exception.StorageException;
 import db.storage.disk.DiskManager;
 import db.storage.disk.StorageManager;
-import db.storage.page.CorruptPageException;
 import db.storage.page.Page;
+import db.storage.page.PageId;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,7 +14,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.channels.ClosedChannelException;
 import java.nio.file.Path;
 
-import static db.storage.disk.DiskManager.PAGE_SIZE;
+import static db.storage.page.Page.PAGE_SIZE;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BufferPoolTest {

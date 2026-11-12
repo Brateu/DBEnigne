@@ -1,6 +1,8 @@
 package db.storage.page;
 
-import static db.storage.disk.DiskManager.PAGE_SIZE;
+import db.exception.CorruptPageException;
+
+import static db.storage.page.Page.PAGE_SIZE;
 
 public class HeapPage extends Page {
 

@@ -8,11 +8,11 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.util.Objects;
 
+import static db.storage.page.Page.PAGE_SIZE;
 import static java.nio.file.StandardOpenOption.*;
 
 public class DiskManager implements Closeable {
 
-    public static final int PAGE_SIZE = 4096;
     private final FileChannel channel;
     private int numPages;
 

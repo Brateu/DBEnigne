@@ -1,4 +1,4 @@
-package db.storage;
+package db.storage.page;
 
 public record PageId(int fileId, int pageNo) {
     public PageId{

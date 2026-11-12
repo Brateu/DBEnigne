@@ -1,4 +1,4 @@
-package db.storage;
+package db.exception;
 
 public class StorageException extends RuntimeException {
     public StorageException(String message, Throwable cause) {

@@ -1,8 +1,9 @@
 package db.storage.page;
 
+import db.exception.CorruptPageException;
 import org.junit.jupiter.api.Test;
 
-import static db.storage.disk.DiskManager.PAGE_SIZE;
+import static db.storage.page.Page.PAGE_SIZE;
 import static db.storage.page.Page.HEADER_SIZE;
 import static db.storage.page.Page.LAYOUT_VERSION;
 import static db.storage.page.Page.LINE_POINTER_SIZE;

@@ -1,15 +1,17 @@
 package db.storage.page;
 
+import db.exception.CorruptPageException;
+
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.NoSuchElementException;
 import java.util.zip.CRC32C;
 
-import static db.storage.disk.DiskManager.PAGE_SIZE;
 import static java.util.Objects.requireNonNull;
 
 public class Page {
 
+    public static final int PAGE_SIZE = 4096;
     public static final int HEADER_SIZE = 24;
     public static final int LINE_POINTER_SIZE = 4;
     public static final int LAYOUT_VERSION = 1;

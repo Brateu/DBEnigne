@@ -1,11 +1,12 @@
 package db.storage.buffer;
 
-import db.storage.PageId;
-import db.storage.StorageException;
+import db.exception.CorruptPageException;
+import db.exception.StorageException;
 import db.storage.disk.DiskManager;
 import db.storage.disk.StorageManager;
-import db.storage.page.CorruptPageException;
 import db.storage.page.Page;
+import db.storage.page.PageId;
+
 import java.io.IOException;
 import java.util.*;
 

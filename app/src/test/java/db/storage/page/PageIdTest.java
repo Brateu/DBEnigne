@@ -1,4 +1,4 @@
-package db.storage;
+package db.storage.page;
 
 import org.junit.jupiter.api.Test;
 

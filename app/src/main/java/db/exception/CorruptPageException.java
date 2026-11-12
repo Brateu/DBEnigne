@@ -1,6 +1,5 @@
-package db.storage.page;
+package db.exception;
 
-import db.storage.StorageException;
 
 public class CorruptPageException extends StorageException {
     public CorruptPageException(String message) {

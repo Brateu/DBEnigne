@@ -1,6 +1,6 @@
 package db.storage.buffer;
 
-import db.storage.PageId;
+import db.storage.page.PageId;
 
 public class ReadPageGuard implements AutoCloseable {
 
