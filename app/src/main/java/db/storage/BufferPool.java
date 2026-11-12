@@ -147,4 +147,18 @@ public class BufferPool {
             flushPage(key);
         }
     }
+
+    public ReadPageGuard fetchPageRead(PageId pageId) {
+        Frame frame = fetchPage(pageId);
+        return new ReadPageGuard(this, frame);
+    }
+
+    public WritePageGuard fetchPageWrite(PageId pageId) {
+        Frame frame = fetchPage(pageId);
+        return new WritePageGuard(this, frame);
+    }
+
+    public WritePageGuard newPageGuarded(int fileId) {
+        return new WritePageGuard(this, newPage(fileId));
+    }
 }
