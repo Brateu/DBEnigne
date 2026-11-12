@@ -73,12 +73,12 @@ Postgres-style throughout. Primary reference: Petrov, *Database Internals* (ch. 
 **Phase 1 — Storage Engine (page-based).** Resume point as of 2026-10-27.
 
 Done and tested (100 tests pass):
-- `db/storage/DiskManager` — FileChannel positional I/O, `checkPageId` helper (DiskManagerTest, 13)
-- `db/storage/Frame` — private fields; package-private pin/unpin/markDirty/clearDirty/reset; reset throws if pinned or dirty (FrameTest, 10)
+- `db/storage/disk/DiskManager` — FileChannel positional I/O, `checkPageId` helper (DiskManagerTest, 13)
+- `db/storage/buffer/Frame` — private fields; package-private pin/unpin/markDirty/clearDirty/reset; reset throws if pinned or dirty (FrameTest, 10)
 - `db/util/DoublyLinkedList` — my own, null-based, guard in remove, `addLast` returns Node (DoublyLinkedListTest, 14)
-- `db/storage/LruReplacer` — implements `Replacer` interface; list + HashMap; `markEvictable` = add candidate, `markNonEvictable` = remove candidate, `victim()` → OptionalInt (LruReplacerTest, 13, incl. randomized model test)
+- `db/storage/buffer/LruReplacer` — implements `Replacer` interface; list + HashMap; `markEvictable` = add candidate, `markNonEvictable` = remove candidate, `victim()` → OptionalInt (LruReplacerTest, 13, incl. randomized model test)
 
-- `db/storage/BufferPool` — fields `pageIdToFrameId`, `freeList`, `Replacer replacer`; private `acquireFrame` (free list → victim → write back if dirty + clearDirty → remove old pageId) and `frameIdOf`; `fetchPage` reads disk before acquiring a frame; `newPage` acquires frame before `allocatePage` and pushes the frame back on failure; `unpinPage` ORs dirty, marks evictable at pin count 0; `flushPage`/`flushAll` (iterates map keys); I/O wrapped in `StorageException` (BufferPoolTest, 28, incl. closed-disk failure tests)
+- `db/storage/buffer/BufferPool` — fields `pageIdToFrameId`, `freeList`, `Replacer replacer`; private `acquireFrame` (free list → victim → write back if dirty + clearDirty → remove old pageId) and `frameIdOf`; `fetchPage` reads disk before acquiring a frame; `newPage` acquires frame before `allocatePage` and pushes the frame back on failure; `unpinPage` ORs dirty, marks evictable at pin count 0; `flushPage`/`flushAll` (iterates map keys); I/O wrapped in `StorageException` (BufferPoolTest, 28, incl. closed-disk failure tests)
 - `DiskManager` caches `numPages` (updated in `allocatePage` after the write succeeds)
 - `Frame.zeroData()` added (no dedicated FrameTest yet; covered via BufferPoolTest)
 
@@ -108,6 +108,7 @@ Already explained (don't re-explain unless asked): pages vs files, slotted pages
 - **One file per table/index, Postgres-style.** Buffer pool keyed by `PageId(fileId, pageNo)` (like Postgres BufferTag); a storage manager maps `fileId → DiskManager` (like smgr); `DiskManager` stays one-file. Heap page mimics Postgres layout (`lower`/`upper`, line pointers, `lsn` in header, `isNew()` for zeroed pages). `RecordId = (pageNo, slotId)` within a table (like ctid).
 - **Heap storage, not index-organized:** rows in heap files, every index (incl. PK) a separate B+tree → `RecordId`. Each phase works without the next; an index-organized variant can come later as a second table AM.
 - **Postgres-style MVCC + redo-only WAL:** versions live in the heap (xmin/xmax/ctid), abort = flip CLOG status, so recovery needs no undo. Buffer pool is steal/no-force; write-back must call `wal.flushUpTo(pageLsn)` once WAL exists.
+- **Packages (mirror Postgres `src/backend`):** `db.storage` = pages and bytes (`PageId`, `StorageException`; `.disk` ≈ smgr: `DiskManager`, `StorageManager`; `.buffer`: `BufferPool`, `Frame`, `Replacer`, `LruReplacer`, guards; `.page`: page layouts). `db.access` gives bytes meaning (`.tuple`, `.heap`, later `.nbtree`). Later: `db.catalog`, `db.sql.*`, `db.txn`, `db.wal`, `db.server`. Create packages when needed, not empty ahead of time. `BufferPool` constructor is still package-private — make it public when something outside `buffer` must create a pool.
 - **Deferred until the whole engine works (scalability upgrades):** 1 GB segment files, forks (free space map / visibility map), TOAST, catalog stored as tables (pg_class-style). MVCC tuple headers come in Phase 4 — leave room in the tuple layout.
 
 ## Tech stack
