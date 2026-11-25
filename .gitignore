@@ -37,3 +37,8 @@ build
 ### IntelliJ project files (machine-specific, regenerated from Gradle) ###
 .idea/
 *.iml
+
+### Claude Code (local notes and settings) ###
+CLAUDE.md
+CLAUDE.local.md
+.claude/

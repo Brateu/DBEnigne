@@ -1,7 +1,7 @@
 package db.storage.page;
 
 public record PageId(int fileId, int pageNo) {
-    public PageId{
+    public PageId {
         if (fileId < 0) {
             throw new IllegalArgumentException("fileId must be non-negative, got " + fileId);
         }
